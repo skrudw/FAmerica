@@ -21,7 +21,7 @@
 </ul>
     
 <h2>🛠️ Технологии</h2>
-    <p>Основано на <a href="https://github.com/Flowseal/zapret-discord-youtube">zapret-manager</a> с улучшениями</p>
+    <p>Основано на <a href="https://github.com/Flowseal/zapret-discord-youtube">zapret-discord-youtube</a> с улучшениями</p>
     
  <h2>🌐 Обход блокировок</h2>
     <div class="services">
