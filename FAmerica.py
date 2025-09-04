@@ -20,6 +20,24 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 import configparser
 from packaging import version
 from urllib.parse import unquote
+def download_icons_if_missing():
+    """Скачивает иконки, если они отсутствуют в папке C:/FAmerica/"""
+    icons = {
+        'github.png': 'https://github.com/skrudw/FAmerica/raw/main/img/github.png',
+        'telegram.png': 'https://github.com/skrudw/FAmerica/raw/main/img/telegram.png'
+    }
+    
+    for icon_name, icon_url in icons.items():
+        icon_path = os.path.join(ROOT_DIR, icon_name)
+        if not os.path.exists(icon_path):
+            try:
+                response = requests.get(icon_url, timeout=10)
+                response.raise_for_status()
+                with open(icon_path, 'wb') as f:
+                    f.write(response.content)
+                print(f"Downloaded {icon_name}")
+            except Exception as e:
+                print(f"Error downloading {icon_name}: {str(e)}")
 def check_for_update():
     config = configparser.ConfigParser()
     config.read('C:/FAmerica/config.ini')
@@ -1263,6 +1281,7 @@ class ZapretManager(QMainWindow):
             self.update_log.emit(f"Error monitoring process: {str(e)}")
 
 if __name__ == "__main__":
+    download_icons_if_missing()
     check_for_update()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  
