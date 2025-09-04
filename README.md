@@ -25,10 +25,10 @@
     
  <h2>🌐 Обход блокировок</h2>
     <div class="services">
-        <span class="service">YouTube</span>
-        <span class="service">Discord</span>
-        <span class="service">SoundCloud</span>
-        <span class="service">И многие другие...</span>
+        <li><strong>YouTube</strong></li>
+       <li><strong>Discord</strong></li>
+        <li><strong>SoundCloud</strong></li>
+        <li><strong>И многие другие...</strong></li>
     </div>
     
 <h2>🔧 Путь к файлам</h2>
