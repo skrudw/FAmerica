@@ -17,8 +17,70 @@ from PyQt5.QtGui import QFont, QPalette, QColor, QMouseEvent, QPainter, QPainter
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QComboBox, QCheckBox, QPushButton, QTextEdit,
                              QMessageBox, QGroupBox, QProgressBar, QSystemTrayIcon, QMenu, QAction, QStyle)
+import configparser
+from packaging import version
+from urllib.parse import unquote
+def check_for_update():
+    config = configparser.ConfigParser()
+    config.read('C:/FAmerica/config.ini')
+    current_ver = config.get('Program', 'version', fallback='0.0.0')
+    
+    api_url = "https://api.github.com/repos/skrudw/FAmerica/releases/latest"
+    try:
+        response = requests.get(api_url, timeout=10)
+        response.raise_for_status()
+        latest_release = response.json()
+        
+        exe_asset = None
+        for asset in latest_release.get('assets', []):
+            if asset['name'].endswith('.exe'):
+                exe_asset = asset
+                break
+        
+        if not exe_asset:
+            print("EXE файл не найден в активах релиза")
+            return
 
+        filename = unquote(exe_asset['name'])
+        version_match = re.search(r'v?(\d+\.\d+(?:\.\d+)?)', filename)
+        if not version_match:
+            print(f"Не удалось извлечь версию из文件名: {filename}")
+            return
+            
+        latest_ver = version_match.group(1)
+        
+        if version.parse(latest_ver) > version.parse(current_ver):
+            print(f"Найдена новая версия: {latest_ver}")
+            download_and_update(exe_asset['browser_download_url'], filename, latest_ver)
+        else:
+            print("У вас актуальная версия программы")
+            
+    except Exception as e:
+        print(f"Ошибка при проверке обновлений: {str(e)}")
 
+def download_and_update(asset_url, filename, new_version):
+    try:
+        response = requests.get(asset_url, stream=True)
+        response.raise_for_status()
+        
+        new_exe_name = f"FAmerica-{new_version}.exe"
+        with open(new_exe_name, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        config = configparser.ConfigParser()
+        config.read('C:/FAmerica/config.ini')
+        if not config.has_section('Program'):
+            config.add_section('Program')
+        config.set('Program', 'version', new_version)
+        with open('C:/FAmerica/config.ini', 'w') as configfile:
+            config.write(configfile)
+        
+        subprocess.Popen([new_exe_name] + sys.argv[1:])
+        sys.exit(0)
+        
+    except Exception as e:
+        print(f"Ошибка при обновлении: {str(e)}")
 ROOT_DIR = r"C:\FAmerica"
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
@@ -226,7 +288,7 @@ class TitleBar(QWidget):
                 border-radius: 10px;
             }
         """)
-        self.telegram_btn.clicked.connect(lambda: self.open_url("https://t.me/skrudw"))
+        self.telegram_btn.clicked.connect(lambda: self.open_url("https://t.me/famerica_channel"))
         
         self.github_btn = QPushButton()
         self.github_btn.setFixedSize(20, 20)
@@ -240,7 +302,7 @@ class TitleBar(QWidget):
                 border-radius: 10px;
             }
         """)
-        self.github_btn.clicked.connect(lambda: self.open_url("https://github.com/"))
+        self.github_btn.clicked.connect(lambda: self.open_url("https://github.com/skrudw/FAmerica/"))
         
         telegram_icon_path = os.path.join(ROOT_DIR, "telegram.png")
         github_icon_path = os.path.join(ROOT_DIR, "github.png")
@@ -1201,6 +1263,7 @@ class ZapretManager(QMainWindow):
             self.update_log.emit(f"Error monitoring process: {str(e)}")
 
 if __name__ == "__main__":
+    check_for_update()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  
     
