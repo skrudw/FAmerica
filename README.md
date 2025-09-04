@@ -1,91 +1,4 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FAmerica - Обход блокировок</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            line-height: 1.6;
-            color: #24292e;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        h1 {
-            color: #0366d6;
-            border-bottom: 1px solid #eaecef;
-            padding-bottom: 0.3em;
-        }
-        h2 {
-            color: #0366d6;
-            margin-top: 24px;
-        }
-        img {
-            max-width: 100%;
-            height: auto;
-            display: block;
-            margin: 20px auto;
-            border-radius: 6px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-        .badge {
-            display: inline-block;
-            padding: 8px 16px;
-            background-color: #28a745;
-            color: white;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: bold;
-            margin: 10px 0;
-        }
-        .badge:hover {
-            background-color: #218838;
-        }
-        .features {
-            list-style-type: none;
-            padding-left: 0;
-        }
-        .features li {
-            margin-bottom: 10px;
-            padding-left: 25px;
-            position: relative;
-        }
-        .features li:before {
-            content: "✔️";
-            position: absolute;
-            left: 0;
-            color: #28a745;
-        }
-        .note {
-            background-color: #fff4e5;
-            border-left: 4px solid #ffa94d;
-            padding: 12px 16px;
-            margin: 20px 0;
-            border-radius: 0 4px 4px 0;
-        }
-        .services {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin: 15px 0;
-        }
-        .service {
-            background-color: #f1f8ff;
-            padding: 6px 12px;
-            border-radius: 16px;
-            font-size: 14px;
-        }
-        .footer {
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #eaecef;
-            font-size: 14px;
-            color: #6a737d;
-        }
-    </style>
-</head>
+
 <body>
     <h1>FAmerica - Обход блокировок</h1>
     
@@ -150,5 +63,4 @@
         <p><strong>Примечание</strong>: Используйте программу только в законных целях и в соответствии с законодательством вашей страны.</p>
     </div>
 </body>
-</html>
 <img width="508" height="512" alt="image" src="https://github.com/user-attachments/assets/c8152bb7-dfea-456a-a802-27feac7b719b" />
