@@ -2,7 +2,7 @@
 <body>
     <h1>FAmerica - Обход блокировок</h1>
     
-    <img src="https://github.com/user-attachments/assets/c8152bb7-dfea-456a-a802-27feac7b719b" alt="FAmerica Logo" width="508" height="512">
+<img src="https://github.com/user-attachments/assets/c8152bb7-dfea-456a-a802-27feac7b719b" alt="FAmerica Logo" width="508" height="512">
     
     <p>Простая и эффективная программа с открытым исходным кодом для обхода блокировок популярных сервисов.</p>
     
