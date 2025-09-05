@@ -5,7 +5,8 @@
     
 <h2>📥 Скачать</h2>
 <a href="https://github.com/skrudw/FAmerica/releases" class="badge">Скачать последнюю версию</a>
-    
+<a href="https://www.virustotal.com/gui/file/0f12a1842c154ccbb63b2f922d7b2fd622f3f4725c718baaff51704e9629f9f3/detection" class="badge">VirusTotal</a>
+
 <div class="note">
 <h2>⚠️ Важное примечание</h2>
 <p>Если у вас не работает обход, попробуйте изменить исполняемый <code>.bat</code> файл. По умолчанию стоит <code>general.bat</code>, попробуйте поставить <code>alt2</code>, <code>alt3</code> или другие варианты!</p>
