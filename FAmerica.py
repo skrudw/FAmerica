@@ -39,6 +39,11 @@ def download_icons_if_missing():
             except Exception as e:
                 print(f"Error downloading {icon_name}: {str(e)}")
 def check_for_update():
+    # Проверяем флаг игнорирования обновлений
+    if not ENABLE_FAmerica_AUTO_UPDATE:
+        print("Автоматическое обновление FAmerica отключено (ENABLE_FAmerica_AUTO_UPDATE = False)")
+        return
+    
     config = configparser.ConfigParser()
     config.read('C:/FAmerica/config.ini')
     current_ver = config.get('Program', 'version', fallback='0.0.0')
@@ -101,6 +106,10 @@ def download_and_update(asset_url, filename, new_version):
         print(f"Ошибка при обновлении: {str(e)}")
 ROOT_DIR = r"C:\FAmerica"
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
+
+# Флаг для игнорирования автоматической проверки обновлений FAmerica
+# Установите в False, чтобы отключить автоматическое обновление при запуске
+ENABLE_FAmerica_AUTO_UPDATE = True
 
 if not os.path.exists(ROOT_DIR):
     os.makedirs(ROOT_DIR)
@@ -396,6 +405,8 @@ class ZapretManager(QMainWindow):
         self.connect_signals()
         self.load_config()
         
+        # Выполняем обновление ipset при запуске
+        self.update_ipset_on_start()
         
         if self.auto_update_cb.isChecked():
             self.auto_update_on_start()
@@ -1043,6 +1054,48 @@ class ZapretManager(QMainWindow):
         """Автоматически проверяет и устанавливает обновления при запуске"""
         self.update_log.emit("Checking for updates on startup...")
         self.check_update()
+
+    def update_ipset_on_start(self):
+        """Выполняет обновление ipset при запуске программы"""
+        # Проверяем, установлены ли файлы zapret (проверка как в service.bat :check_extracted)
+        bin_dir = os.path.join(ROOT_DIR, "bin")
+        if not os.path.exists(bin_dir):
+            self.update_log.emit("Zapret files not installed (bin folder not found), skipping ipset update")
+            return
+        
+        self.update_log.emit("Starting ipset update...")
+        # Запускаем в отдельном потоке, чтобы не блокировать UI
+        threading.Thread(target=self.update_ipset, daemon=True).start()
+
+    def update_ipset(self):
+        """Обновляет ipset список, реализуя логику :ipset_update из service.bat"""
+        try:
+            # Путь к файлу списка ipset (аналогично service.bat)
+            lists_dir = os.path.join(ROOT_DIR, "lists")
+            if not os.path.exists(lists_dir):
+                os.makedirs(lists_dir)
+            
+            list_file = os.path.join(lists_dir, "ipset-all.txt")
+            url = "https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt"
+            
+            self.update_log.emit(f"Updating ipset-all from {url}...")
+            
+            # Загружаем файл через requests (как в batch используется curl или PowerShell)
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                
+                # Сохраняем файл
+                with open(list_file, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                
+                self.update_log.emit(f"Successfully updated ipset-all.txt ({len(response.text)} bytes)")
+                self.update_log.emit("ipset update finished")
+            except requests.exceptions.RequestException as e:
+                self.update_log.emit(f"Error downloading ipset list: {str(e)}")
+                self.update_log.emit("ipset update failed")
+        except Exception as e:
+            self.update_log.emit(f"Error during ipset update: {str(e)}")
 
     def get_bat_files(self):
         bat_files = []
