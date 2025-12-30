@@ -17,7 +17,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QPoint, QRec
 from PyQt5.QtGui import QFont, QPalette, QColor, QMouseEvent, QPainter, QPainterPath, QRegion, QIcon, QPen, QDesktopServices
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QComboBox, QCheckBox, QPushButton, QTextEdit,
-                             QMessageBox, QGroupBox, QProgressBar, QSystemTrayIcon, QMenu, QAction, QStyle)
+                             QMessageBox, QGroupBox, QProgressBar, QSystemTrayIcon, QMenu, QAction, QStyle, QScrollArea)
 import configparser
 from packaging import version
 from urllib.parse import unquote
@@ -110,7 +110,7 @@ CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
 # Флаг для игнорирования автоматической проверки обновлений FAmerica
 # Установите в False, чтобы отключить автоматическое обновление при запуске
-ENABLE_FAmerica_AUTO_UPDATE = False
+ENABLE_FAmerica_AUTO_UPDATE = True
 
 if not os.path.exists(ROOT_DIR):
     os.makedirs(ROOT_DIR)
@@ -353,7 +353,7 @@ class TitleBar(QWidget):
         self.title = QLabel("FAmerica")
         self.title.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 14px; margin-top: 15px;")
         
-        self.credits = QLabel("v0.1 created by skrudw")
+        self.credits = QLabel("v0.4 created by skrudw")
         self.credits.setStyleSheet("color: #888888; font-size: 10px; margin-top: 15px;")
         
         self.telegram_btn = QPushButton()
@@ -385,6 +385,25 @@ class TitleBar(QWidget):
         """)
         self.github_btn.clicked.connect(lambda: self.open_url("https://github.com/skrudw/FAmerica/"))
         
+        self.settings_btn = QPushButton("service")
+        self.settings_btn.setFixedSize(70, 25)
+        self.settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #444444;
+                border: none;
+                color: #FFFFFF !important;
+                font-size: 11px;
+                font-weight: normal;
+                padding: 2px 5px;
+            }
+            QPushButton:hover {
+                background-color: #666666;
+                border-radius: 5px;
+            }
+        """)
+        self.settings_btn.setToolTip("Service Settings")
+        self.settings_btn.clicked.connect(self.open_settings)
+        
         telegram_icon_path = os.path.join(ROOT_DIR, "telegram.png")
         github_icon_path = os.path.join(ROOT_DIR, "github.png")
         
@@ -410,7 +429,8 @@ class TitleBar(QWidget):
         self.layout.addWidget(self.credits)  
         self.layout.addStretch()
         self.layout.addWidget(self.telegram_btn) 
-        self.layout.addWidget(self.github_btn)    
+        self.layout.addWidget(self.github_btn)
+        self.layout.addWidget(self.settings_btn)
         self.layout.addWidget(self.minimize_btn)
         self.layout.addWidget(self.close_btn)
         
@@ -424,6 +444,429 @@ class TitleBar(QWidget):
             webbrowser.open(url)
         except Exception as e:
             self.parent.update_log.emit(f"Error opening URL: {str(e)}")
+    
+    def open_settings(self):
+        """Открывает окно настроек"""
+        if not hasattr(self.parent, 'settings_window') or self.parent.settings_window is None:
+            self.parent.settings_window = SettingsWindow(self.parent)
+        self.parent.settings_window.show()
+        self.parent.settings_window.raise_()
+        self.parent.settings_window.activateWindow()
+
+class SettingsWindow(QMainWindow):
+    """Окно настроек с функциями из service.bat"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_manager = parent
+        self.setWindowTitle("FAmerica Settings")
+        self.setFixedSize(600, 700)
+        self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
+        
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+        
+        # Заголовок
+        title = QLabel("Service Settings")
+        title.setStyleSheet("color: #FFFFFF; font-size: 18px; font-weight: bold;")
+        layout.addWidget(title)
+        
+        # Область с кнопками
+        scroll_area = QTextEdit()
+        scroll_area.setReadOnly(True)
+        scroll_area.setStyleSheet("""
+            QTextEdit {
+                background-color: #2C2C2C;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                padding: 10px;
+                font-size: 11px;
+                font-family: 'Consolas', 'Monaco', monospace;
+            }
+        """)
+        self.log_output = scroll_area
+        layout.addWidget(scroll_area)
+        
+        # Кнопки
+        buttons_layout = QVBoxLayout()
+        buttons_layout.setSpacing(10)
+        
+        # Строка 1
+        row1 = QHBoxLayout()
+        self.btn_install = QPushButton("1. Install Service")
+        self.btn_remove = QPushButton("2. Remove Services")
+        self.btn_status = QPushButton("3. Check Status")
+        row1.addWidget(self.btn_install)
+        row1.addWidget(self.btn_remove)
+        row1.addWidget(self.btn_status)
+        buttons_layout.addLayout(row1)
+        
+        # Строка 2
+        row2 = QHBoxLayout()
+        self.btn_diagnostics = QPushButton("4. Run Diagnostics")
+        self.btn_check_updates = QPushButton("5. Check Updates")
+        row2.addWidget(self.btn_diagnostics)
+        row2.addWidget(self.btn_check_updates)
+        buttons_layout.addLayout(row2)
+        
+        # Строка 3
+        row3 = QHBoxLayout()
+        self.btn_toggle_check_updates = QPushButton("6. Toggle Check Updates")
+        self.btn_toggle_game_filter = QPushButton("7. Toggle Game Filter")
+        row3.addWidget(self.btn_toggle_check_updates)
+        row3.addWidget(self.btn_toggle_game_filter)
+        buttons_layout.addLayout(row3)
+        
+        # Строка 4
+        row4 = QHBoxLayout()
+        self.btn_toggle_ipset = QPushButton("8. Toggle ipset")
+        self.btn_update_ipset = QPushButton("9. Update ipset list")
+        row4.addWidget(self.btn_toggle_ipset)
+        row4.addWidget(self.btn_update_ipset)
+        buttons_layout.addLayout(row4)
+        
+        # Строка 5
+        row5 = QHBoxLayout()
+        self.btn_update_hosts = QPushButton("10. Update hosts file")
+        self.btn_run_tests = QPushButton("11. Run Tests")
+        row5.addWidget(self.btn_update_hosts)
+        row5.addWidget(self.btn_run_tests)
+        buttons_layout.addLayout(row5)
+        
+        layout.addLayout(buttons_layout)
+        
+        # Подключаем сигналы
+        self.btn_install.clicked.connect(self.install_service)
+        self.btn_remove.clicked.connect(self.remove_services)
+        self.btn_status.clicked.connect(self.check_status)
+        self.btn_diagnostics.clicked.connect(self.run_diagnostics)
+        self.btn_check_updates.clicked.connect(self.check_updates)
+        self.btn_toggle_check_updates.clicked.connect(self.toggle_check_updates)
+        self.btn_toggle_game_filter.clicked.connect(self.toggle_game_filter)
+        self.btn_toggle_ipset.clicked.connect(self.toggle_ipset)
+        self.btn_update_ipset.clicked.connect(self.update_ipset_list)
+        self.btn_update_hosts.clicked.connect(self.update_hosts)
+        self.btn_run_tests.clicked.connect(self.run_tests)
+        
+        # Применяем стили
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #232323;
+                color: #FFFFFF;
+            }
+            QPushButton {
+                background-color: #464646;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                padding: 10px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #5E5E5E;
+                color: #4AFF95;
+            }
+            QPushButton:pressed {
+                background-color: #1F1F1F;
+            }
+        """)
+        
+        # Обновляем статусы
+        self.update_statuses()
+    
+    def log(self, message):
+        """Добавляет сообщение в лог"""
+        self.log_output.append(message)
+    
+    def update_statuses(self):
+        """Обновляет статусы переключателей"""
+        # Обновляем текст кнопок с текущими статусами
+        try:
+            # Check Updates status
+            check_updates_flag = os.path.join(ROOT_DIR, "utils", "check_updates.enabled")
+            check_updates_status = "enabled" if os.path.exists(check_updates_flag) else "disabled"
+            self.btn_toggle_check_updates.setText(f"6. Toggle Check Updates ({check_updates_status})")
+            
+            # Game Filter status
+            game_filter_flag = os.path.join(ROOT_DIR, "utils", "game_filter.enabled")
+            game_filter_status = "enabled" if os.path.exists(game_filter_flag) else "disabled"
+            self.btn_toggle_game_filter.setText(f"7. Toggle Game Filter ({game_filter_status})")
+            
+            # ipset status
+            list_file = os.path.join(ROOT_DIR, "lists", "ipset-all.txt")
+            if os.path.exists(list_file):
+                with open(list_file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if not content:
+                        ipset_status = "any"
+                    elif content == "203.0.113.113/32":
+                        ipset_status = "none"
+                    else:
+                        ipset_status = "loaded"
+            else:
+                ipset_status = "any"
+            self.btn_toggle_ipset.setText(f"8. Toggle ipset ({ipset_status})")
+        except Exception as e:
+            self.log(f"Error updating statuses: {str(e)}")
+    
+    def install_service(self):
+        """Устанавливает сервис zapret"""
+        self.log("=== Install Service ===")
+        self.log("This function requires selecting a BAT file from service.bat")
+        self.log("Please use the main window to start a BAT file, or run service.bat manually")
+        self.log("")
+    
+    def remove_services(self):
+        """Удаляет сервисы zapret"""
+        self.log("=== Remove Services ===")
+        try:
+            # Останавливаем сервис zapret
+            result = subprocess.run(['sc', 'query', 'zapret'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                subprocess.run(['net', 'stop', 'zapret'], capture_output=True, timeout=10)
+                subprocess.run(['sc', 'delete', 'zapret'], capture_output=True, timeout=5)
+                self.log("✓ zapret service stopped and removed")
+            else:
+                self.log("zapret service not found")
+            
+            # Останавливаем процессы winws.exe
+            subprocess.run(['taskkill', '/F', '/IM', 'winws.exe'], capture_output=True, timeout=5)
+            self.log("✓ winws.exe processes stopped")
+            
+            # Удаляем сервисы WinDivert
+            for service_name in ['WinDivert', 'WinDivert14']:
+                result = subprocess.run(['sc', 'query', service_name], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    subprocess.run(['net', 'stop', service_name], capture_output=True, timeout=10)
+                    subprocess.run(['sc', 'delete', service_name], capture_output=True, timeout=5)
+                    self.log(f"✓ {service_name} service stopped and removed")
+            
+            self.log("Services removal completed")
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+    
+    def check_status(self):
+        """Проверяет статус сервисов"""
+        self.log("=== Check Status ===")
+        try:
+            # Проверка сервиса zapret
+            result = subprocess.run(['sc', 'query', 'zapret'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                if 'RUNNING' in result.stdout:
+                    self.log("✓ zapret service is RUNNING")
+                else:
+                    self.log("✗ zapret service is NOT running")
+            else:
+                self.log("✗ zapret service is NOT installed")
+            
+            # Проверка процессов winws.exe
+            result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq winws.exe'], 
+                                  capture_output=True, text=True, timeout=5)
+            if 'winws.exe' in result.stdout:
+                self.log("✓ winws.exe is RUNNING")
+            else:
+                self.log("✗ winws.exe is NOT running")
+            
+            # Проверка WinDivert
+            result = subprocess.run(['sc', 'query', 'WinDivert'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                if 'RUNNING' in result.stdout:
+                    self.log("✓ WinDivert service is RUNNING")
+                else:
+                    self.log("✗ WinDivert service is NOT running")
+            else:
+                self.log("WinDivert service not found")
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+    
+    def run_diagnostics(self):
+        """Запускает диагностику"""
+        self.log("=== Run Diagnostics ===")
+        self.log("Running diagnostics...")
+        try:
+            # Проверка Base Filtering Engine
+            result = subprocess.run(['sc', 'query', 'BFE'], capture_output=True, text=True, timeout=5)
+            if 'RUNNING' in result.stdout:
+                self.log("✓ Base Filtering Engine is running")
+            else:
+                self.log("✗ Base Filtering Engine is NOT running")
+            
+            # Проверка TCP timestamps
+            result = subprocess.run(['netsh', 'interface', 'tcp', 'show', 'global'], 
+                                  capture_output=True, text=True, timeout=5)
+            if 'timestamps' in result.stdout.lower() and 'enabled' in result.stdout.lower():
+                self.log("✓ TCP timestamps are enabled")
+            else:
+                self.log("✗ TCP timestamps are disabled")
+                subprocess.run(['netsh', 'interface', 'tcp', 'set', 'global', 'timestamps=enabled'], 
+                             capture_output=True, timeout=5)
+                self.log("  → Attempted to enable TCP timestamps")
+            
+            # Проверка процессов Adguard
+            result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq AdguardSvc.exe'], 
+                                  capture_output=True, text=True, timeout=5)
+            if 'AdguardSvc.exe' in result.stdout:
+                self.log("⚠ Adguard process found - may cause problems")
+            else:
+                self.log("✓ Adguard check passed")
+            
+            self.log("Diagnostics completed")
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+    
+    def check_updates(self):
+        """Проверяет обновления zapret"""
+        self.log("=== Check Updates ===")
+        if self.parent_manager:
+            self.parent_manager.check_update()
+            self.log("Update check initiated - see main window logs")
+        else:
+            self.log("Error: parent manager not available")
+        self.log("")
+    
+    def toggle_check_updates(self):
+        """Переключает автоматическую проверку обновлений"""
+        self.log("=== Toggle Check Updates ===")
+        try:
+            check_updates_flag = os.path.join(ROOT_DIR, "utils", "check_updates.enabled")
+            if os.path.exists(check_updates_flag):
+                os.remove(check_updates_flag)
+                self.log("Check updates DISABLED")
+            else:
+                utils_dir = os.path.join(ROOT_DIR, "utils")
+                if not os.path.exists(utils_dir):
+                    os.makedirs(utils_dir)
+                with open(check_updates_flag, 'w') as f:
+                    f.write("ENABLED")
+                self.log("Check updates ENABLED")
+            self.update_statuses()
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+    
+    def toggle_game_filter(self):
+        """Переключает игровой фильтр"""
+        self.log("=== Toggle Game Filter ===")
+        try:
+            game_filter_flag = os.path.join(ROOT_DIR, "utils", "game_filter.enabled")
+            if os.path.exists(game_filter_flag):
+                os.remove(game_filter_flag)
+                self.log("Game filter DISABLED")
+            else:
+                utils_dir = os.path.join(ROOT_DIR, "utils")
+                if not os.path.exists(utils_dir):
+                    os.makedirs(utils_dir)
+                with open(game_filter_flag, 'w') as f:
+                    f.write("ENABLED")
+                self.log("Game filter ENABLED")
+            self.update_statuses()
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+    
+    def toggle_ipset(self):
+        """Переключает режим ipset"""
+        self.log("=== Toggle ipset ===")
+        try:
+            list_file = os.path.join(ROOT_DIR, "lists", "ipset-all.txt")
+            backup_file = f"{list_file}.backup"
+            
+            # Определяем текущий статус
+            if os.path.exists(list_file):
+                with open(list_file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if not content:
+                        current_status = "any"
+                    elif content == "203.0.113.113/32":
+                        current_status = "none"
+                    else:
+                        current_status = "loaded"
+            else:
+                current_status = "any"
+            
+            if current_status == "loaded":
+                # Переключаем на none
+                if not os.path.exists(backup_file):
+                    shutil.copy2(list_file, backup_file)
+                with open(list_file, 'w', encoding='utf-8') as f:
+                    f.write("203.0.113.113/32")
+                self.log("ipset switched to 'none' mode")
+            elif current_status == "none":
+                # Переключаем на any
+                with open(list_file, 'w', encoding='utf-8') as f:
+                    f.write("")
+                self.log("ipset switched to 'any' mode")
+            else:  # any
+                # Переключаем на loaded
+                if os.path.exists(backup_file):
+                    shutil.copy2(backup_file, list_file)
+                    self.log("ipset switched to 'loaded' mode")
+                else:
+                    self.log("Error: no backup to restore. Update list first.")
+            self.update_statuses()
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+    
+    def update_ipset_list(self):
+        """Обновляет список ipset"""
+        self.log("=== Update ipset list ===")
+        if self.parent_manager:
+            # Запускаем обновление в отдельном потоке
+            threading.Thread(target=self.parent_manager.update_ipset, daemon=True).start()
+            self.log("ipset update initiated - see main window logs")
+        else:
+            self.log("Error: parent manager not available")
+        self.log("")
+    
+    def update_hosts(self):
+        """Обновляет hosts файл"""
+        self.log("=== Update hosts file ===")
+        try:
+            hosts_file = os.path.join(os.environ['SystemRoot'], 'System32', 'drivers', 'etc', 'hosts')
+            hosts_url = "https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/hosts"
+            
+            response = requests.get(hosts_url, timeout=10)
+            response.raise_for_status()
+            
+            temp_file = os.path.join(os.environ['TEMP'], 'zapret_hosts.txt')
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            
+            self.log(f"Hosts file downloaded to: {temp_file}")
+            self.log("Please manually copy content to your hosts file:")
+            self.log(hosts_file)
+            self.log("Opening files...")
+            
+            subprocess.Popen(['notepad.exe', temp_file])
+            subprocess.Popen(['explorer.exe', '/select,', hosts_file])
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+    
+    def run_tests(self):
+        """Запускает тесты"""
+        self.log("=== Run Tests ===")
+        try:
+            test_script = os.path.join(ROOT_DIR, "utils", "test zapret.ps1")
+            if os.path.exists(test_script):
+                subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', 
+                                '-File', test_script])
+                self.log("Test script launched in PowerShell window")
+            else:
+                self.log("Test script not found")
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        self.log("")
+
 class ZapretManager(QMainWindow):
     
     update_status = pyqtSignal(str)
@@ -919,14 +1362,44 @@ class ZapretManager(QMainWindow):
         bat_layout.addWidget(self.bat_combo)
         middle_layout.addLayout(bat_layout)
         
+        checkboxes_layout = QHBoxLayout()
+        checkboxes_layout.setSpacing(10)
+        
         self.auto_update_cb = CustomCheckBox("Auto-update on start")
         self.auto_update_cb.setChecked(True)
         self.auto_update_cb.stateChanged.connect(self.on_auto_update_change)
-        middle_layout.addWidget(self.auto_update_cb)
+        checkboxes_layout.addWidget(self.auto_update_cb)
         
         self.auto_start_cb = CustomCheckBox("Auto-start with Windows")
         self.auto_start_cb.stateChanged.connect(self.on_auto_start_change)
-        middle_layout.addWidget(self.auto_start_cb)
+        checkboxes_layout.addWidget(self.auto_start_cb)
+        
+        checkboxes_layout.addStretch()
+        
+        self.apply_defaults_btn = QPushButton("Fix Discord")
+        self.apply_defaults_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #464646;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #5E5E5E;
+                color: #4AFF95;
+            }
+            QPushButton:pressed {
+                background-color: #1F1F1F;
+            }
+        """)
+        self.apply_defaults_btn.setToolTip("Enable game filter and set ipset to 'none' mode")
+        self.apply_defaults_btn.clicked.connect(self.apply_default_settings)
+        checkboxes_layout.addWidget(self.apply_defaults_btn)
+        
+        middle_layout.addLayout(checkboxes_layout)
         
         
         buttons_layout = QHBoxLayout()
@@ -1111,6 +1584,52 @@ class ZapretManager(QMainWindow):
             self.disable_autostart()
         self.save_config()
 
+    def apply_default_settings(self):
+        """Применяет настройки по умолчанию: включает game filter и устанавливает ipset в режим 'none'"""
+        try:
+            # Включаем game filter
+            utils_dir = os.path.join(ROOT_DIR, "utils")
+            if not os.path.exists(utils_dir):
+                os.makedirs(utils_dir)
+            
+            game_filter_file = os.path.join(utils_dir, "game_filter.enabled")
+            with open(game_filter_file, 'w', encoding='utf-8') as f:
+                f.write("ENABLED")
+            self.update_log.emit("Game filter enabled")
+            
+            # Устанавливаем ipset в режим 'none'
+            lists_dir = os.path.join(ROOT_DIR, "lists")
+            if not os.path.exists(lists_dir):
+                os.makedirs(lists_dir)
+            
+            list_file = os.path.join(lists_dir, "ipset-all.txt")
+            backup_file = f"{list_file}.backup"
+            
+            # Сохраняем backup текущего файла, если он существует и не пустой
+            if os.path.exists(list_file):
+                try:
+                    with open(list_file, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                        if content and content != "203.0.113.113/32":
+                            # Сохраняем backup только если файл не пустой и не в режиме "none"
+                            with open(backup_file, 'w', encoding='utf-8') as bf:
+                                bf.write(content)
+                except:
+                    pass
+            
+            # Устанавливаем ipset в режим "none"
+            with open(list_file, 'w', encoding='utf-8') as f:
+                f.write("203.0.113.113/32")
+            
+            self.update_log.emit("ipset switched to 'none' mode")
+            self.update_log.emit("Default settings applied successfully")
+            
+            # Обновляем статусы в окне настроек, если оно открыто
+            if hasattr(self, 'settings_window') and self.settings_window:
+                self.settings_window.update_statuses()
+        except Exception as e:
+            self.update_log.emit(f"Error applying default settings: {str(e)}")
+
     @pyqtSlot(int)
     def on_hide_console_change(self, state):
         """Обрабатывает изменение настройки скрытия консоли"""
@@ -1205,11 +1724,31 @@ class ZapretManager(QMainWindow):
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
                 
-                # Сохраняем файл
+                # Сохраняем backup текущего файла перед обновлением, если он существует и не пустой
+                backup_file = f"{list_file}.backup"
+                old_content = None
+                if os.path.exists(list_file):
+                    try:
+                        with open(list_file, 'r', encoding='utf-8') as f:
+                            old_content = f.read().strip()
+                            # Сохраняем backup только если файл не пустой и не в режиме "none"
+                            if old_content and old_content != "203.0.113.113/32":
+                                with open(backup_file, 'w', encoding='utf-8') as bf:
+                                    bf.write(old_content)
+                    except:
+                        pass
+                
+                # Сохраняем загруженный файл как backup (новый список)
+                if not old_content or old_content == "203.0.113.113/32" or not os.path.exists(backup_file):
+                    # Если backup не существует или файл был в режиме "none", сохраняем новый список как backup
+                    with open(backup_file, 'w', encoding='utf-8') as bf:
+                        bf.write(response.text)
+                
+                # Сохраняем обновленный список
                 with open(list_file, 'w', encoding='utf-8') as f:
                     f.write(response.text)
                 
-                self.update_log.emit(f"Successfully updated ipset-all.txt ({len(response.text)} bytes)")
+                self.update_log.emit(f"Successfully updated ipset list (backup saved, {len(response.text)} bytes)")
                 self.update_log.emit("ipset update finished")
             except requests.exceptions.RequestException as e:
                 self.update_log.emit(f"Error downloading ipset list: {str(e)}")
