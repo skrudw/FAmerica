@@ -9,7 +9,8 @@ import json
 import re
 import winreg
 import shutil
-import psutil  
+import psutil
+import time  
 from io import BytesIO
 import webbrowser  
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QPoint, QRectF, QUrl, QSize
@@ -109,7 +110,7 @@ CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
 # Флаг для игнорирования автоматической проверки обновлений FAmerica
 # Установите в False, чтобы отключить автоматическое обновление при запуске
-ENABLE_FAmerica_AUTO_UPDATE = True
+ENABLE_FAmerica_AUTO_UPDATE = False
 
 if not os.path.exists(ROOT_DIR):
     os.makedirs(ROOT_DIR)
@@ -122,6 +123,7 @@ class DownloadThread(QThread):
     def __init__(self, url, parent=None):
         super().__init__(parent)
         self.url = url
+        self.parent_manager = parent
 
     def run(self):
         try:
@@ -141,8 +143,29 @@ class DownloadThread(QThread):
                         self.progress_signal.emit(progress)
                     
             self.update_signal.emit("Extracting...")
-            with zipfile.ZipFile(temp_zip, 'r') as zf:
-                zf.extractall(ROOT_DIR)
+            
+            # Перед распаковкой еще раз пытаемся остановить процессы zapret
+            # на случай, если они были запущены во время загрузки
+            try:
+                # Останавливаем процессы winws.exe через taskkill
+                subprocess.run(['taskkill', '/F', '/IM', 'winws.exe'], 
+                             capture_output=True, timeout=5)
+            except:
+                pass
+            
+            # Даем немного времени на завершение процессов
+            time.sleep(1)
+            
+            try:
+                with zipfile.ZipFile(temp_zip, 'r') as zf:
+                    zf.extractall(ROOT_DIR)
+            except PermissionError as e:
+                # Если все еще есть ошибка доступа, предлагаем перезагрузку
+                self.finished_signal.emit(False, 
+                    f"Ошибка доступа к файлам: {str(e)}\n"
+                    "Файлы zapret используются другим процессом.\n"
+                    "Попробуйте закрыть все программы, использующие zapret, и повторите обновление.")
+                return
             
             os.remove(temp_zip)
             
@@ -193,6 +216,37 @@ class ConsoleReaderThread(QThread):
                 self.output_received.emit(output.decode('cp866', errors='ignore').strip())
         except Exception as e:
             self.output_received.emit(f"Error reading console output: {str(e)}")
+
+class BatFileComboBox(QComboBox):
+    """Кастомный ComboBox для выбора BAT файлов с автообновлением списка"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_manager = parent
+    
+    def showPopup(self):
+        """Переопределяем для обновления списка перед показом"""
+        if self.parent_manager:
+            # Сохраняем текущий выбранный файл
+            current_text = self.currentText()
+            
+            # Очищаем список
+            self.clear()
+            
+            # Получаем обновленный список BAT файлов
+            bat_files = self.parent_manager.get_bat_files()
+            self.addItems(bat_files)
+            
+            # Восстанавливаем выбранный файл, если он все еще существует
+            index = self.findText(current_text)
+            if index >= 0:
+                self.setCurrentIndex(index)
+            else:
+                # Если выбранного файла больше нет, выбираем первый или сохраняем последний выбранный
+                if self.count() > 0:
+                    self.setCurrentIndex(0)
+        
+        # Вызываем стандартный метод показа списка
+        super().showPopup()
 
 class CustomCheckBox(QCheckBox):
     def __init__(self, text, parent=None):
@@ -514,6 +568,72 @@ class ZapretManager(QMainWindow):
         except Exception as e:
             self.update_log.emit(f"Error stopping processes: {str(e)}")
 
+    def stop_all_zapret_processes_and_services(self):
+        """Останавливает все процессы и сервисы zapret для обновления (как в service.bat :service_remove)"""
+        try:
+            self.update_log.emit("Stopping all zapret processes and services...")
+            
+            # Останавливаем основной процесс, если запущен
+            if self.process and self.process.poll() is None:
+                try:
+                    self.stop_process()
+                except:
+                    pass
+            
+            # Останавливаем все процессы winws.exe
+            stopped_winws = False
+            for proc in psutil.process_iter(['name', 'pid']):
+                try:
+                    if proc.info['name'] and 'winws.exe' in proc.info['name'].lower():
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except psutil.TimeoutExpired:
+                            proc.kill()
+                        stopped_winws = True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            
+            if stopped_winws:
+                self.update_log.emit("Stopped winws.exe processes")
+            
+            # Останавливаем сервис zapret
+            try:
+                result = subprocess.run(['sc', 'query', 'zapret'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    subprocess.run(['net', 'stop', 'zapret'], 
+                                 capture_output=True, timeout=10)
+                    subprocess.run(['sc', 'delete', 'zapret'], 
+                                 capture_output=True, timeout=5)
+                    self.update_log.emit("Stopped and removed zapret service")
+            except:
+                pass
+            
+            # Останавливаем сервисы WinDivert
+            for service_name in ['WinDivert', 'WinDivert14']:
+                try:
+                    result = subprocess.run(['sc', 'query', service_name], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        subprocess.run(['net', 'stop', service_name], 
+                                     capture_output=True, timeout=10)
+                        subprocess.run(['sc', 'delete', service_name], 
+                                     capture_output=True, timeout=5)
+                        self.update_log.emit(f"Stopped and removed {service_name} service")
+                except:
+                    pass
+            
+            # Даем время на завершение процессов
+            time.sleep(2)
+            
+            self.update_log.emit("All zapret processes and services stopped")
+            return True
+            
+        except Exception as e:
+            self.update_log.emit(f"Error stopping zapret processes: {str(e)}")
+            return False
+
     def init_ui(self):
         self.setWindowTitle("FAmerica")
         self.setFixedSize(500, 500)
@@ -743,7 +863,7 @@ class ZapretManager(QMainWindow):
         
         bat_layout = QHBoxLayout()
         bat_layout.addWidget(QLabel("Select BAT file:"))
-        self.bat_combo = QComboBox()
+        self.bat_combo = BatFileComboBox(self)
         self.bat_combo.addItems(self.get_bat_files())
         self.bat_combo.setCurrentText("General.bat")
         self.bat_combo.currentTextChanged.connect(self.on_bat_change)
@@ -1222,10 +1342,36 @@ class ZapretManager(QMainWindow):
 
     def download_and_extract(self, url):
         """Запускает поток для скачивания и распаковки"""
+        # Останавливаем все процессы zapret перед обновлением
+        success = self.stop_all_zapret_processes_and_services()
+        if not success:
+            # Если не удалось остановить процессы, предлагаем перезагрузку
+            reply = QMessageBox.question(
+                self, 
+                'Не удалось остановить процессы',
+                'Некоторые процессы zapret не удалось остановить.\n\n'
+                'Возможны два варианта:\n'
+                '1. Попробовать продолжить (может возникнуть ошибка)\n'
+                '2. Перезагрузить компьютер для завершения обновления\n\n'
+                'Хотите перезагрузить компьютер сейчас?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            
+            if reply == QMessageBox.Yes:
+                try:
+                    subprocess.run(['shutdown', '/r', '/t', '10', '/c', 'Перезагрузка для обновления zapret'], check=True)
+                    self.update_log.emit("Компьютер будет перезагружен через 10 секунд для обновления zapret")
+                    QMessageBox.information(self, 'Перезагрузка', 'Компьютер будет перезагружен через 10 секунд.')
+                except Exception as e:
+                    self.update_log.emit(f"Ошибка при попытке перезагрузки: {str(e)}")
+                    QMessageBox.warning(self, 'Ошибка', 'Не удалось инициировать перезагрузку. Попробуйте вручную.')
+                return
+        
         self.set_progress_visible.emit(True)
         self.update_progress.emit(0)
         
-        self.download_thread = DownloadThread(url)
+        self.download_thread = DownloadThread(url, self)
         self.download_thread.update_signal.connect(self.update_status.emit)
         self.download_thread.progress_signal.connect(self.update_progress.emit)
         self.download_thread.finished_signal.connect(self.on_download_finished)
