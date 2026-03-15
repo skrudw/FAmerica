@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:\\Users\\skrwz\\Documents\\GitHub\\FAmerica\\img\\icon.ico'],
+    icon='img/icon.ico',
 )
