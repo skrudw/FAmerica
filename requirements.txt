@@ -1,0 +1,3 @@
+# FAmerica dependencies (PyQt5, requests, etc. — install separately if needed)
+# For Telegram Fix tab (SOCKS5 WebSocket proxy):
+cryptography>=41.0.0

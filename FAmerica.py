@@ -1,5 +1,6 @@
 import os
 import sys
+import asyncio
 import requests
 import zipfile
 import subprocess
@@ -17,7 +18,8 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QPoint, QRec
 from PyQt5.QtGui import QFont, QPalette, QColor, QMouseEvent, QPainter, QPainterPath, QRegion, QIcon, QPen, QDesktopServices
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QComboBox, QCheckBox, QPushButton, QTextEdit,
-                             QMessageBox, QGroupBox, QProgressBar, QSystemTrayIcon, QMenu, QAction, QStyle, QScrollArea)
+                             QMessageBox, QGroupBox, QProgressBar, QSystemTrayIcon, QMenu, QAction, QStyle, QScrollArea,
+                             QStackedWidget, QFrame, QSpinBox, QPlainTextEdit)
 import configparser
 from packaging import version
 from urllib.parse import unquote
@@ -108,6 +110,13 @@ def download_and_update(asset_url, filename, new_version):
 ROOT_DIR = r"C:\FAmerica"
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
+try:
+    import tg_ws_proxy
+    TG_PROXY_AVAILABLE = True
+except Exception:
+    tg_ws_proxy = None
+    TG_PROXY_AVAILABLE = False
+
 # Флаг для игнорирования автоматической проверки обновлений FAmerica
 # Установите в False, чтобы отключить автоматическое обновление при запуске
 ENABLE_FAmerica_AUTO_UPDATE = True
@@ -173,6 +182,49 @@ class DownloadThread(QThread):
         except Exception as e:
             self.finished_signal.emit(False, f"Error during update: {str(e)}")
 
+class IpsetUpdateThread(QThread):
+    """Поток обновления ipset; по завершении (успех или ошибка) излучает finished()."""
+    log_msg = pyqtSignal(str)
+
+    def __init__(self, parent_manager=None):
+        super().__init__(parent_manager)
+        self.manager = parent_manager
+
+    def run(self):
+        try:
+            lists_dir = os.path.join(ROOT_DIR, "lists")
+            if not os.path.exists(lists_dir):
+                os.makedirs(lists_dir)
+            list_file = os.path.join(lists_dir, "ipset-all.txt")
+            url = "https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt"
+            self.log_msg.emit(f"Updating ipset-all from {url}...")
+            try:
+                response = requests.get(url, timeout=15)
+                response.raise_for_status()
+                backup_file = f"{list_file}.backup"
+                old_content = None
+                if os.path.exists(list_file):
+                    try:
+                        with open(list_file, 'r', encoding='utf-8') as f:
+                            old_content = f.read().strip()
+                            if old_content and old_content != "203.0.113.113/32":
+                                with open(backup_file, 'w', encoding='utf-8') as bf:
+                                    bf.write(old_content)
+                    except Exception:
+                        pass
+                if not old_content or old_content == "203.0.113.113/32" or not os.path.exists(backup_file):
+                    with open(backup_file, 'w', encoding='utf-8') as bf:
+                        bf.write(response.text)
+                with open(list_file, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                self.log_msg.emit(f"Successfully updated ipset list (backup saved, {len(response.text)} bytes)")
+                self.log_msg.emit("ipset update finished")
+            except requests.exceptions.RequestException as e:
+                self.log_msg.emit(f"Error downloading ipset list: {str(e)}")
+                self.log_msg.emit("ipset update failed")
+        except Exception as e:
+            self.log_msg.emit(f"Error during ipset update: {str(e)}")
+
 class UpdateCheckerThread(QThread):
     update_available = pyqtSignal(str, str, bool) 
     error = pyqtSignal(str)
@@ -216,6 +268,42 @@ class ConsoleReaderThread(QThread):
                 self.output_received.emit(output.decode('cp866', errors='ignore').strip())
         except Exception as e:
             self.output_received.emit(f"Error reading console output: {str(e)}")
+
+
+class TelegramProxyThread(QThread):
+    """Запускает Telegram WebSocket proxy в отдельном потоке с asyncio."""
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, port, dc_opt, host="127.0.0.1", parent=None):
+        super().__init__(parent)
+        self.port = port
+        self.dc_opt = dc_opt
+        self.host = host
+        self._loop = None
+        self._stop_ev = None
+
+    def run(self):
+        if not TG_PROXY_AVAILABLE or tg_ws_proxy is None:
+            self.error_signal.emit("Модуль tg_ws_proxy или cryptography не установлен.")
+            return
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._stop_ev = asyncio.Event()
+        try:
+            self._loop.run_until_complete(
+                tg_ws_proxy._run(self.port, self.dc_opt, stop_event=self._stop_ev, host=self.host)
+            )
+        except Exception as e:
+            self.error_signal.emit(str(e))
+        finally:
+            self._loop.close()
+            self._loop = None
+            self._stop_ev = None
+
+    def request_stop(self):
+        if self._loop and self._stop_ev:
+            self._loop.call_soon_threadsafe(self._stop_ev.set)
+
 
 class BatFileComboBox(QComboBox):
     """Кастомный ComboBox для выбора BAT файлов с автообновлением списка"""
@@ -342,7 +430,149 @@ class CustomCloseButton(QPushButton):
         painter.drawLine(6, 6, 14, 14) 
         painter.drawLine(14, 6, 6, 14)
 
+class LeftSidebar(QWidget):
+    """Левая панель 160px с иконкой, табами и кнопками. Поддержка перетаскивания окна."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.main_window = parent
+        self.setFixedWidth(160)
+        self.setStyleSheet("background-color: #191919;")
+        self._drag_start = QPoint(0, 0)
+        self._dragging = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        self.close_btn = CustomCloseButton(self)
+        self.close_btn.clicked.connect(self.main_window.hide_to_tray)
+        top_row.addWidget(self.close_btn)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+        layout.addSpacing(4)
+
+        self.icon_label = QLabel("FAmerica")
+        self.icon_label.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 13px;")
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.icon_label)
+        layout.addSpacing(12)
+
+        tab_style = """
+            QPushButton {
+                background-color: #252525;
+                color: #AAAAAA;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 12px;
+                font-size: 11px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: #2D2D2D;
+                color: #FFFFFF;
+            }
+            QPushButton:checked {
+                background-color: #333333;
+                color: #FFFFFF;
+            }
+        """
+        self.tab_zapret = QPushButton("Zapret - discord, youtube")
+        self.tab_zapret.setCheckable(True)
+        self.tab_zapret.setChecked(True)
+        self.tab_zapret.setStyleSheet(tab_style)
+        self._zapret_marquee_text = "Zapret - discord, youtube"
+        self._zapret_marquee_index = 0
+        self._zapret_marquee_len = 22
+        self._zapret_marquee_paused = False
+        self._zapret_marquee_timer = QTimer(self)
+        self._zapret_marquee_timer.timeout.connect(self._update_zapret_marquee)
+        self._zapret_marquee_timer.start(250)
+        self.tab_telegram = QPushButton("Telegram Fix")
+        self.tab_telegram.setCheckable(True)
+        self.tab_telegram.setStyleSheet(tab_style)
+        self.tab_settings = QPushButton("Settings")
+        self.tab_settings.setCheckable(True)
+        self.tab_settings.setStyleSheet(tab_style)
+
+        layout.addWidget(self.tab_zapret)
+        layout.addWidget(self.tab_telegram)
+        layout.addWidget(self.tab_settings)
+        layout.addStretch()
+
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(6)
+        self.telegram_btn = QPushButton()
+        self.telegram_btn.setFixedSize(24, 24)
+        self.telegram_btn.setStyleSheet("QPushButton { background-color: transparent; border: none; } QPushButton:hover { background-color: #333; border-radius: 12px; }")
+        self.telegram_btn.clicked.connect(lambda: self._open_url("https://t.me/famerica_channel"))
+        self.github_btn = QPushButton()
+        self.github_btn.setFixedSize(24, 24)
+        self.github_btn.setStyleSheet("QPushButton { background-color: transparent; border: none; } QPushButton:hover { background-color: #333; border-radius: 12px; }")
+        self.github_btn.clicked.connect(lambda: self._open_url("https://github.com/skrudw/FAmerica/"))
+        telegram_icon_path = os.path.join(ROOT_DIR, "telegram.png")
+        github_icon_path = os.path.join(ROOT_DIR, "github.png")
+        if os.path.exists(telegram_icon_path):
+            self.telegram_btn.setIcon(QIcon(telegram_icon_path))
+            self.telegram_btn.setIconSize(QSize(16, 16))
+        else:
+            self.telegram_btn.setText("T")
+        if os.path.exists(github_icon_path):
+            self.github_btn.setIcon(QIcon(github_icon_path))
+            self.github_btn.setIconSize(QSize(16, 16))
+        else:
+            self.github_btn.setText("G")
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(self.telegram_btn)
+        bottom_layout.addWidget(self.github_btn)
+        bottom_layout.addStretch()
+        layout.addLayout(bottom_layout)
+
+    def _update_zapret_marquee(self):
+        if self._zapret_marquee_paused:
+            return
+        padded = self._zapret_marquee_text + "    " + self._zapret_marquee_text
+        n = len(self._zapret_marquee_text) + 4
+        start = self._zapret_marquee_index % n
+        self.tab_zapret.setText(padded[start:start + self._zapret_marquee_len])
+        if self._zapret_marquee_index == 0:
+            self._zapret_marquee_paused = True
+            self._zapret_marquee_timer.stop()
+            QTimer.singleShot(5000, self._zapret_marquee_resume)
+            return
+        self._zapret_marquee_index = (self._zapret_marquee_index + 1) % n
+
+    def _zapret_marquee_resume(self):
+        self._zapret_marquee_index = 1
+        self._zapret_marquee_paused = False
+        self._zapret_marquee_timer.start(250)
+
+    def _open_url(self, url):
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            self.main_window.update_log.emit(f"Error opening URL: {str(e)}")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start = event.globalPos() - self.window().frameGeometry().topLeft()
+            self._dragging = True
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging and event.buttons() & Qt.LeftButton:
+            self.window().move(event.globalPos() - self._drag_start)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+        super().mouseReleaseEvent(event)
+
+
 class TitleBar(QWidget):
+    """Заголовок для других окон (например Settings)."""
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -353,7 +583,7 @@ class TitleBar(QWidget):
         self.title = QLabel("FAmerica")
         self.title.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 14px; margin-top: 15px;")
         
-        self.credits = QLabel("v0.4 created by skrudw")
+        self.credits = QLabel("v0.5 created by skrudw")
         self.credits.setStyleSheet("color: #888888; font-size: 10px; margin-top: 15px;")
         
         self.telegram_btn = QPushButton()
@@ -902,11 +1132,11 @@ class ZapretManager(QMainWindow):
         self.connect_signals()
         self.load_config()
         
-        # Выполняем обновление ipset при запуске
+        # Сначала обновление ipset, затем проверка обновлений (если включена), затем запуск zapret
+        self._user_stopped = False
+        self._zapret_auto_restart_pending = False
         self.update_ipset_on_start()
-        
-        if self.auto_update_cb.isChecked():
-            self.auto_update_on_start()
+        QTimer.singleShot(800, self._maybe_auto_start_telegram_proxy)
 
     def is_admin(self):
         """Проверяет, запущена ли программа с правами администратора"""
@@ -930,11 +1160,11 @@ class ZapretManager(QMainWindow):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(35, 35, 35))  
+        painter.setBrush(QColor(0x19, 0x19, 0x19))  
         
-       
+        
         path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()), 12, 12)
+        path.addRoundedRect(QRectF(self.rect()), 20, 20)
         painter.drawPath(path)
         
         
@@ -1079,27 +1309,31 @@ class ZapretManager(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("FAmerica")
-        self.setFixedSize(500, 500)
+        self.setFixedSize(620, 460)
         
         central_widget = QWidget()
-        central_widget.setStyleSheet("""
-            QWidget {
-                background-color: transparent;
-                border-radius: 12px;
-            }
-        """)
+        central_widget.setStyleSheet("background-color: transparent; border-radius: 20px;")
         self.setCentralWidget(central_widget)
         
-        layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(15, 0, 15, 15)
-        layout.setSpacing(15)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
-        self.title_bar = TitleBar(self)
-        layout.addWidget(self.title_bar)
+        self.sidebar = LeftSidebar(self)
+        main_layout.addWidget(self.sidebar)
+        
+        right_widget = QWidget()
+        right_widget.setStyleSheet("background-color: #191919;")
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(10)
+        
+        self.stacked = QStackedWidget()
+        self.stacked.setStyleSheet("background-color: #191919;")
         
         self.setStyleSheet("""
             QMainWindow, QWidget {
-                background-color: #232323;
+                background-color: #191919;
                 color: #FFFFFF;
             }
             QLabel {
@@ -1255,17 +1489,11 @@ class ZapretManager(QMainWindow):
             }
         """)
         
- 
         top_section = QWidget()
-        top_section.setStyleSheet("""
-            QWidget {
-                background-color: #2C2C2C;
-                border-radius: 13px;
-            }
-        """)
+        top_section.setStyleSheet("QWidget { background-color: #252525; border-radius: 10px; }")
         top_layout = QVBoxLayout(top_section)
-        top_layout.setContentsMargins(15, 15, 15, 15)
-        top_layout.setSpacing(10)
+        top_layout.setContentsMargins(10, 10, 10, 10)
+        top_layout.setSpacing(6)
         
 
         versions_layout = QHBoxLayout()
@@ -1290,19 +1518,11 @@ class ZapretManager(QMainWindow):
         self.progress_bar.setVisible(False)
         top_layout.addWidget(self.progress_bar)
         
-        layout.addWidget(top_section)
-        
-
         middle_section = QWidget()
-        middle_section.setStyleSheet("""
-            QWidget {
-                background-color: #2C2C2C;
-                border-radius: 13px;
-            }
-        """)
+        middle_section.setStyleSheet("QWidget { background-color: #252525; border-radius: 10px; }")
         middle_layout = QVBoxLayout(middle_section)
-        middle_layout.setContentsMargins(15, 15, 15, 15)
-        middle_layout.setSpacing(15)
+        middle_layout.setContentsMargins(10, 10, 10, 10)
+        middle_layout.setSpacing(8)
         
         bat_layout = QHBoxLayout()
         bat_layout.addWidget(QLabel("Select BAT file:"))
@@ -1364,18 +1584,7 @@ class ZapretManager(QMainWindow):
         
         checkboxes_layout = QHBoxLayout()
         checkboxes_layout.setSpacing(10)
-        
-        self.auto_update_cb = CustomCheckBox("Auto-update on start")
-        self.auto_update_cb.setChecked(True)
-        self.auto_update_cb.stateChanged.connect(self.on_auto_update_change)
-        checkboxes_layout.addWidget(self.auto_update_cb)
-        
-        self.auto_start_cb = CustomCheckBox("Auto-start with Windows")
-        self.auto_start_cb.stateChanged.connect(self.on_auto_start_change)
-        checkboxes_layout.addWidget(self.auto_start_cb)
-        
         checkboxes_layout.addStretch()
-        
         self.apply_defaults_btn = QPushButton("Fix Discord")
         self.apply_defaults_btn.setStyleSheet("""
             QPushButton {
@@ -1398,143 +1607,209 @@ class ZapretManager(QMainWindow):
         self.apply_defaults_btn.setToolTip("Enable game filter and set ipset to 'none' mode")
         self.apply_defaults_btn.clicked.connect(self.apply_default_settings)
         checkboxes_layout.addWidget(self.apply_defaults_btn)
-        
-        middle_layout.addLayout(checkboxes_layout)
-        
-        
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(10)
-        
-        self.start_btn = QPushButton("START")
-        self.start_btn.clicked.connect(self.start_process)
-        self.start_btn.setStyleSheet("""
+        btn_style = """
             QPushButton {
                 background-color: #464646;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 5px;
-                padding: 10px 15px;
-                font-size: 12px;
+                padding: 8px 12px;
+                font-size: 11px;
                 font-weight: bold;
             }
-            QPushButton:hover {
-                background-color: #5E5E5E;
-                color: #4AFF95;
-            }
-            QPushButton:pressed {
-                background-color: #1F1F1F;
-                color: #4AFF95;
-            }
-            QPushButton:disabled {
-                background-color: #1A1A1A;
-                color: #666666;
-            }
-        """)
-        buttons_layout.addWidget(self.start_btn)
+            QPushButton:hover { background-color: #5E5E5E; color: #4AFF95; }
+            QPushButton:pressed { background-color: #1F1F1F; color: #4AFF95; }
+            QPushButton:disabled { background-color: #1A1A1A; color: #666666; }
+        """
+        self.update_btn = QPushButton("Update")
+        self.update_btn.clicked.connect(self.update_app)
+        self.update_btn.setStyleSheet(btn_style)
+        checkboxes_layout.addWidget(self.update_btn)
+        middle_layout.addLayout(checkboxes_layout)
         
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
+        self.start_btn = QPushButton("START")
+        self.start_btn.clicked.connect(self.start_process)
+        self.start_btn.setStyleSheet(btn_style)
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.clicked.connect(self.stop_process)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #464646;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 5px;
-                padding: 10px 15px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #5E5E5E;
-                color: #4AFF95;
-            }
-            QPushButton:pressed {
-                background-color: #1F1F1F;
-                color: #4AFF95;
-            }
-            QPushButton:disabled {
-                background-color: #1A1A1A;
-                color: #666666;
-            }
-        """)
-        buttons_layout.addWidget(self.stop_btn)
-        
-        self.check_update_btn = QPushButton("Check update")
-        self.check_update_btn.clicked.connect(self.check_update)
-        self.check_update_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #464646;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 5px;
-                padding: 10px 15px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #5E5E5E;
-                color: #4AFF95;
-            }
-            QPushButton:pressed {
-                background-color: #1F1F1F;
-                color: #4AFF95;
-            }
-            QPushButton:disabled {
-                background-color: #1A1A1A;
-                color: #666666;
-            }
-        """)
-        buttons_layout.addWidget(self.check_update_btn)
-        
-        self.update_btn = QPushButton("Update")
-        self.update_btn.clicked.connect(self.update_app)
-        self.update_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #464646;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 5px;
-                padding: 10px 15px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #5E5E5E;
-                color: #4AFF95;
-            }
-            QPushButton:pressed {
-                background-color: #1F1F1F;
-                color: #4AFF95;
-            }
-            QPushButton:disabled {
-                background-color: #1A1A1A;
-                color: #666666;
-            }
-        """)
-        buttons_layout.addWidget(self.update_btn)
-        
+        self.stop_btn.setStyleSheet(btn_style)
+        buttons_layout.addWidget(self.start_btn, 1)
+        buttons_layout.addWidget(self.stop_btn, 1)
         middle_layout.addLayout(buttons_layout)
-        layout.addWidget(middle_section)
+        
+        zapret_page = QWidget()
+        zapret_page.setStyleSheet("background-color: #191919;")
+        zapret_page_layout = QVBoxLayout(zapret_page)
+        zapret_page_layout.setContentsMargins(0, 0, 0, 0)
+        zapret_page_layout.setSpacing(8)
+        zapret_page_layout.addWidget(top_section)
+        zapret_page_layout.addWidget(middle_section, 1)
+        self.stacked.addWidget(zapret_page)
+        
+        telegram_page = QWidget()
+        telegram_page.setStyleSheet("background-color: #191919;")
+        telegram_layout = QVBoxLayout(telegram_page)
+        telegram_layout.setSpacing(10)
+        tg_title = QLabel("Telegram Fix")
+        tg_title.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 12px;")
+        telegram_layout.addWidget(tg_title)
+        port_row = QHBoxLayout()
+        self.telegram_proxy_port_spinbox = QSpinBox()
+        self.telegram_proxy_port_spinbox.setRange(1, 65535)
+        self.telegram_proxy_port_spinbox.setValue(1080)
+        self.telegram_proxy_port_spinbox.setStyleSheet("background-color: #252525; color: #FFF; border: none; border-radius: 5px; padding: 6px; min-width: 80px;")
+        port_row.addWidget(self.telegram_proxy_port_spinbox)
+        port_row.addStretch()
+        telegram_layout.addLayout(port_row)
+        self.telegram_proxy_dc_edit = QPlainTextEdit()
+        self.telegram_proxy_dc_edit.setPlaceholderText("2:149.154.167.220\n4:149.154.167.220")
+        self.telegram_proxy_dc_edit.setMaximumHeight(70)
+        self.telegram_proxy_dc_edit.setStyleSheet("background-color: #252525; color: #FFF; border: none; border-radius: 5px; padding: 6px; font-size: 11px;")
+        self.telegram_proxy_dc_edit.setPlainText("2:149.154.167.220\n4:149.154.167.220")
+        telegram_layout.addWidget(self.telegram_proxy_dc_edit)
+        btn_row = QHBoxLayout()
+        btn_style_tg = "QPushButton { background-color: #464646; color: #FFF; border: none; border-radius: 5px; padding: 8px 14px; } QPushButton:hover { background-color: #5E5E5E; color: #4AFF95; } QPushButton:disabled { background-color: #333; color: #666; }"
+        self.telegram_proxy_start_btn = QPushButton("Запустить прокси")
+        self.telegram_proxy_start_btn.setStyleSheet(btn_style_tg)
+        self.telegram_proxy_start_btn.clicked.connect(self._telegram_proxy_start)
+        self.telegram_proxy_stop_btn = QPushButton("Остановить прокси")
+        self.telegram_proxy_stop_btn.setStyleSheet(btn_style_tg)
+        self.telegram_proxy_stop_btn.setEnabled(False)
+        self.telegram_proxy_stop_btn.clicked.connect(self._telegram_proxy_stop)
+        btn_row.addWidget(self.telegram_proxy_start_btn, 1)
+        btn_row.addWidget(self.telegram_proxy_stop_btn, 1)
+        telegram_layout.addLayout(btn_row)
+        telegram_layout.addStretch()
+        if not TG_PROXY_AVAILABLE:
+            tg_warn = QLabel("Установите cryptography: pip install cryptography")
+            tg_warn.setStyleSheet("color: #cc6600; font-size: 11px;")
+            telegram_layout.addWidget(tg_warn)
+            self.telegram_proxy_start_btn.setEnabled(False)
+        telegram_layout.addStretch()
+        self.telegram_proxy_thread = None
+        self.stacked.addWidget(telegram_page)
+        
+        settings_page = QWidget()
+        settings_page.setStyleSheet("background-color: #191919;")
+        settings_page_layout = QVBoxLayout(settings_page)
+        settings_page_layout.setSpacing(12)
+        self.auto_update_cb = CustomCheckBox("Auto-update on start")
+        self.auto_update_cb.setChecked(True)
+        self.auto_update_cb.stateChanged.connect(self.on_auto_update_change)
+        settings_page_layout.addWidget(self.auto_update_cb)
+        self.auto_start_cb = CustomCheckBox("Auto-start with Windows")
+        self.auto_start_cb.stateChanged.connect(self.on_auto_start_change)
+        settings_page_layout.addWidget(self.auto_start_cb)
+        self.telegram_proxy_autostart_cb = CustomCheckBox("Auto-start telegram fix (SOCKS5 WebSocket Proxy)")
+        self.telegram_proxy_autostart_cb.setChecked(True)
+        self.telegram_proxy_autostart_cb.stateChanged.connect(self._on_telegram_proxy_autostart_change)
+        settings_page_layout.addWidget(self.telegram_proxy_autostart_cb)
+        settings_page_layout.addSpacing(8)
+        open_settings_btn = QPushButton("Open Service Settings")
+        open_settings_btn.setStyleSheet("""
+            QPushButton { background-color: #464646; color: #FFF; border: none; border-radius: 5px; padding: 10px 15px; }
+            QPushButton:hover { background-color: #5E5E5E; color: #4AFF95; }
+        """)
+        open_settings_btn.clicked.connect(self._open_settings_window)
+        settings_page_layout.addWidget(open_settings_btn)
+        settings_credits = QLabel("v0.5 created by skrudw")
+        settings_credits.setStyleSheet("color: #888888; font-size: 10px;")
+        settings_page_layout.addWidget(settings_credits)
+        settings_page_layout.addStretch()
+        self.stacked.addWidget(settings_page)
+        
+        right_layout.addWidget(self.stacked)
         
         bottom_section = QWidget()
-        bottom_section.setStyleSheet("""
-            QWidget {
-                background-color: #2C2C2C;
-                border-radius: 13px;
-            }
-        """)
+        bottom_section.setStyleSheet("QWidget { background-color: #252525; border-radius: 10px; }")
         bottom_layout = QVBoxLayout(bottom_section)
-        bottom_layout.setContentsMargins(15, 15, 15, 15)
-        bottom_layout.setSpacing(10)
-        
+        bottom_layout.setContentsMargins(8, 6, 8, 8)
+        bottom_layout.setSpacing(4)
         bottom_layout.addWidget(QLabel("Logs:"))
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(100)
-        bottom_layout.addWidget(self.log_text)
+        self.log_text.setMinimumHeight(140)
+        self.log_text.setStyleSheet("background-color: #1A1A1A; color: #FFFFFF; border: none; border-radius: 8px; padding: 8px; font-size: 11px;")
+        bottom_layout.addWidget(self.log_text, 1)
+        right_layout.addWidget(bottom_section)
         
-        layout.addWidget(bottom_section)
+        main_layout.addWidget(right_widget)
+        
+        self.sidebar.tab_zapret.clicked.connect(lambda: self._set_page(0))
+        self.sidebar.tab_telegram.clicked.connect(lambda: self._set_page(1))
+        self.sidebar.tab_settings.clicked.connect(lambda: self._set_page(2))
+
+    def _set_page(self, index):
+        self.stacked.setCurrentIndex(index)
+        self.sidebar.tab_zapret.setChecked(index == 0)
+        self.sidebar.tab_telegram.setChecked(index == 1)
+        self.sidebar.tab_settings.setChecked(index == 2)
+
+    def _open_settings_window(self):
+        if not hasattr(self, 'settings_window') or self.settings_window is None:
+            self.settings_window = SettingsWindow(self)
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
+
+    def _telegram_proxy_start(self):
+        if not TG_PROXY_AVAILABLE or self.telegram_proxy_thread and self.telegram_proxy_thread.isRunning():
+            return
+        port = self.telegram_proxy_port_spinbox.value()
+        lines = [l.strip() for l in self.telegram_proxy_dc_edit.toPlainText().strip().splitlines() if l.strip()]
+        if not lines:
+            QMessageBox.warning(self, "Telegram Fix", "Укажите хотя бы один DC:IP (например 2:149.154.167.220)")
+            return
+        try:
+            dc_opt = tg_ws_proxy.parse_dc_ip_list(lines)
+        except ValueError as e:
+            QMessageBox.warning(self, "Telegram Fix", f"Ошибка в DC:IP: {e}")
+            return
+        self.save_config()
+        self.telegram_proxy_thread = TelegramProxyThread(port, dc_opt, "127.0.0.1", self)
+        self.telegram_proxy_thread.error_signal.connect(self._telegram_proxy_error)
+        self.telegram_proxy_thread.finished.connect(self._telegram_proxy_finished)
+        self.update_log.emit(f"Telegram proxy: starting on 127.0.0.1:{port}")
+        self.telegram_proxy_thread.start()
+        self.telegram_proxy_start_btn.setEnabled(False)
+        self.telegram_proxy_stop_btn.setEnabled(True)
+        QTimer.singleShot(1500, lambda p=port: self.update_log.emit(f"Telegram proxy: started on 127.0.0.1:{p}") if (getattr(self, 'telegram_proxy_thread', None) and self.telegram_proxy_thread.isRunning()) else None)
+        QTimer.singleShot(2000, lambda p=port: self._telegram_proxy_open_in_tg_auto(p))
+
+    def _telegram_proxy_stop(self):
+        if self.telegram_proxy_thread and self.telegram_proxy_thread.isRunning():
+            self.telegram_proxy_thread.request_stop()
+            self.update_log.emit("Telegram proxy: stopping...")
+
+    def _telegram_proxy_open_in_tg_auto(self, port):
+        try:
+            webbrowser.open(f"tg://socks?server=127.0.0.1&port={port}")
+        except Exception:
+            pass
+
+    def _telegram_proxy_finished(self):
+        self.telegram_proxy_start_btn.setEnabled(TG_PROXY_AVAILABLE)
+        self.telegram_proxy_stop_btn.setEnabled(False)
+        self.update_log.emit("Telegram proxy: stopped")
+        self.telegram_proxy_thread = None
+
+    def _telegram_proxy_error(self, msg):
+        self._telegram_proxy_finished()
+        self.update_log.emit(f"Telegram proxy error: {msg}")
+        QMessageBox.warning(self, "Telegram Fix", f"Ошибка прокси: {msg}")
+
+    def _on_telegram_proxy_autostart_change(self, state):
+        self.save_config()
+
+    def _maybe_auto_start_telegram_proxy(self):
+        if not getattr(self, 'telegram_proxy_autostart_cb', None) or not self.telegram_proxy_autostart_cb.isChecked():
+            return
+        if not TG_PROXY_AVAILABLE or (self.telegram_proxy_thread and self.telegram_proxy_thread.isRunning()):
+            return
+        self._telegram_proxy_start()
 
     def connect_signals(self):
         """Подключает сигналы к слотам"""
@@ -1695,16 +1970,24 @@ class ZapretManager(QMainWindow):
         self.check_update()
 
     def update_ipset_on_start(self):
-        """Выполняет обновление ipset при запуске программы"""
-        # Проверяем, установлены ли файлы zapret (проверка как в service.bat :check_extracted)
+        """Выполняет обновление ipset при запуске; по завершении запускает проверку обновлений или zapret."""
         bin_dir = os.path.join(ROOT_DIR, "bin")
         if not os.path.exists(bin_dir):
             self.update_log.emit("Zapret files not installed (bin folder not found), skipping ipset update")
+            self._on_ipset_update_done()
             return
-        
         self.update_log.emit("Starting ipset update...")
-        # Запускаем в отдельном потоке, чтобы не блокировать UI
-        threading.Thread(target=self.update_ipset, daemon=True).start()
+        self._ipset_thread = IpsetUpdateThread(self)
+        self._ipset_thread.log_msg.connect(self.update_log.emit)
+        self._ipset_thread.finished.connect(self._on_ipset_update_done)
+        self._ipset_thread.start()
+
+    def _on_ipset_update_done(self):
+        """После завершения обновления ipset — проверка обновлений или сразу запуск zapret."""
+        if self.auto_update_cb.isChecked():
+            self.auto_update_on_start()
+        else:
+            QTimer.singleShot(1000, self.start_process)
 
     def update_ipset(self):
         """Обновляет ipset список, реализуя логику :ipset_update из service.bat"""
@@ -1806,8 +2089,13 @@ class ZapretManager(QMainWindow):
                     
                     auto_start = config.get('auto_start', True)
                     self.auto_start_cb.setChecked(auto_start)
-                    
-
+                    if hasattr(self, 'telegram_proxy_port_spinbox'):
+                        self.telegram_proxy_port_spinbox.setValue(config.get('telegram_proxy_port', 1080))
+                    if hasattr(self, 'telegram_proxy_dc_edit'):
+                        dc_ip = config.get('telegram_proxy_dc_ip', ["2:149.154.167.220", "4:149.154.167.220"])
+                        self.telegram_proxy_dc_edit.setPlainText("\n".join(dc_ip) if isinstance(dc_ip, list) else str(dc_ip))
+                    if hasattr(self, 'telegram_proxy_autostart_cb'):
+                        self.telegram_proxy_autostart_cb.setChecked(config.get('telegram_proxy_autostart', True))
                     
                     if auto_start:
                         if not self.check_autostart():
@@ -1847,6 +2135,13 @@ class ZapretManager(QMainWindow):
             'auto_update': self.auto_update_cb.isChecked(),
             'auto_start': self.auto_start_cb.isChecked(),
         }
+        if hasattr(self, 'telegram_proxy_port_spinbox'):
+            config['telegram_proxy_port'] = self.telegram_proxy_port_spinbox.value()
+        if hasattr(self, 'telegram_proxy_dc_edit'):
+            dc_text = self.telegram_proxy_dc_edit.toPlainText().strip()
+            config['telegram_proxy_dc_ip'] = [l.strip() for l in dc_text.splitlines() if l.strip()] or ["2:149.154.167.220", "4:149.154.167.220"]
+        if hasattr(self, 'telegram_proxy_autostart_cb'):
+            config['telegram_proxy_autostart'] = self.telegram_proxy_autostart_cb.isChecked()
         with open(CONFIG_PATH, 'w') as f:
             json.dump(config, f)
 
@@ -1854,8 +2149,16 @@ class ZapretManager(QMainWindow):
         """Проверяет обновления в отдельном потоке"""
         self.update_checker_thread = UpdateCheckerThread(self.repo_url, self.current_version)
         self.update_checker_thread.update_available.connect(self.on_update_available)
-        self.update_checker_thread.error.connect(self.update_log.emit)
+        self.update_checker_thread.error.connect(self._on_update_check_error)
         self.update_checker_thread.start()
+
+    @pyqtSlot(str)
+    def _on_update_check_error(self, error_msg):
+        """При ошибке проверки обновлений всё равно запускаем zapret (например, нет интернета)."""
+        self.update_log.emit(error_msg)
+        if self.auto_update_cb.isChecked():
+            self.update_log.emit("Starting zapret anyway (update check failed).")
+            QTimer.singleShot(1000, self.start_process)
 
     @pyqtSlot(str, str, bool)
     def on_update_available(self, latest_version, asset_url, is_available):
@@ -1961,6 +2264,7 @@ class ZapretManager(QMainWindow):
         if self.process and self.process.poll() is None:
             self.update_log.emit("Process is already running")
             return
+        self._user_stopped = False
 
         bat_file = os.path.join(ROOT_DIR, self.bat_combo.currentText())
         if not os.path.exists(bat_file):
@@ -1998,6 +2302,7 @@ class ZapretManager(QMainWindow):
             self.update_log.emit(f"Error starting process: {str(e)}")
 
     def stop_process(self):
+        self._user_stopped = True
         if self.process:
             try:
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.process.pid)], check=True)
@@ -2009,12 +2314,22 @@ class ZapretManager(QMainWindow):
             except Exception as e:
                 self.update_log.emit(f"Error: {str(e)}")
 
+    def _do_auto_restart(self):
+        if getattr(self, '_zapret_auto_restart_pending', False):
+            self._zapret_auto_restart_pending = False
+            self.update_log.emit("Restarting zapret after unexpected exit...")
+            self.start_process()
+
     def monitor_process(self):
         try:
             self.process.wait()
+            code = self.process.returncode if self.process else None
             self.update_status.emit("Not running")
             self.update_log.emit("Process finished")
             self.set_buttons_enabled.emit(True, False)
+            if code != 0 and not getattr(self, '_user_stopped', True) and not getattr(self, '_zapret_auto_restart_pending', False):
+                self._zapret_auto_restart_pending = True
+                QTimer.singleShot(5000, self._do_auto_restart)
         except Exception as e:
             self.update_log.emit(f"Error monitoring process: {str(e)}")
 
