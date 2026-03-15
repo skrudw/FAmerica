@@ -6,7 +6,14 @@
 <h2>📥 Скачать</h2>
 <a href="https://github.com/skrudw/FAmerica/releases" class="badge">Скачать последнюю версию</a>
 <a href="https://www.virustotal.com/gui/file/0f12a1842c154ccbb63b2f922d7b2fd622f3f4725c718baaff51704e9629f9f3/detection" class="badge">VirusTotal</a>
-
+ <h2>🌐 Обход блокировок</h2>
+    <div class="services">
+        <li><strong>Telegram</strong></li>
+        <li><strong>YouTube</strong></li>
+       <li><strong>Discord</strong></li>
+        <li><strong>SoundCloud</strong></li>
+        <li><strong>И многие другие...</strong></li>
+    </div>
 <div class="note">
 <h2>⚠️ Важное примечание</h2>
 <p>Если у вас не работает обход, попробуйте изменить исполняемый <code>.bat</code> файл. По умолчанию стоит <code>general.bat</code>, попробуйте поставить <code>alt2</code>, <code>alt3</code> или другие варианты!</p>
@@ -23,14 +30,6 @@
     
 <h2>🛠️ Технологии</h2>
     <p>Основано на <a href="https://github.com/Flowseal/zapret-discord-youtube">zapret-discord-youtube</a> с улучшениями</p>
-    
- <h2>🌐 Обход блокировок</h2>
-    <div class="services">
-        <li><strong>YouTube</strong></li>
-       <li><strong>Discord</strong></li>
-        <li><strong>SoundCloud</strong></li>
-        <li><strong>И многие другие...</strong></li>
-    </div>
     
 <h2>🔧 Путь к файлам</h2>
     <p>C:/FAmerica/</p>
