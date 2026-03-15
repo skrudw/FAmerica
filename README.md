@@ -18,7 +18,7 @@
 <h2>⚠️ Важное примечание</h2>
 <p>Если у вас не работает обход, попробуйте изменить исполняемый <code>.bat</code> файл. По умолчанию стоит <code>general.bat</code>, попробуйте поставить <code>alt2</code>, <code>alt3</code> или другие варианты!</p>
 </div>
-<img src="https://github.com/user-attachments/assets/c8152bb7-dfea-456a-a802-27feac7b719b" alt="FAmerica Logo" width="508" height="512">
+<img src="https://raw.githubusercontent.com/skrudw/FAmerica/refs/heads/main/img/preview.jpg" alt="FAmerica Logo" width="508" height="512">
 <h2>✨ Особенности</h2>
 <ul class="features">
         <li><strong>Автозапуск</strong> - запускается автоматически с системой</li>
