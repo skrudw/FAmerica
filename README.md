@@ -14,11 +14,11 @@
         <li><strong>SoundCloud</strong></li>
         <li><strong>И многие другие...</strong></li>
     </div>
+    <img src="https://raw.githubusercontent.com/skrudw/FAmerica/refs/heads/main/img/preview.jpg" alt="FAmerica Logo" width="508" height="512">
 <div class="note">
 <h2>⚠️ Важное примечание</h2>
 <p>Если у вас не работает обход, попробуйте изменить исполняемый <code>.bat</code> файл. По умолчанию стоит <code>general.bat</code>, попробуйте поставить <code>alt2</code>, <code>alt3</code> или другие варианты!</p>
 </div>
-<img src="https://raw.githubusercontent.com/skrudw/FAmerica/refs/heads/main/img/preview.jpg" alt="FAmerica Logo" width="508" height="512">
 <h2>✨ Особенности</h2>
 <ul class="features">
         <li><strong>Автозапуск</strong> - запускается автоматически с системой</li>
